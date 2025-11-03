@@ -1,0 +1,3 @@
+rx                   # Thư viện ReactiveX (RxPY)
+requests             # Để thực hiện HTTP call đến MockAPI
+google-cloud-storage # Để upload file lên GCS

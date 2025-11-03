@@ -1,0 +1,56 @@
+# amc-workflow.yaml
+main:
+    steps:
+        - init: # 1. Thiết lập biến môi trường
+            assign:
+                - project_id: "my-map-315516"
+                - region: "asia-southeast1"
+                - gcs_bucket: "my-private-amc-1352" 
+                - current_time: ${sys.now()} 
+                - current_time_str: ${time.format(current_time)}
+                - year: ${text.substring(current_time_str, 0, 4)}
+                - month: ${text.substring(current_time_str, 5, 7)}
+                - day: ${text.substring(current_time_str, 8, 10)}
+                - hour: ${text.substring(current_time_str, 11, 13)}
+                - execution_time: ${year + month + day + hour}
+                - job1_name: "amc-job-1"
+                - cf_job2_url: "https://asia-southeast1-my-map-315516.cloudfunctions.net/load-gcs-to-bq" 
+                - sa_email: ${"amc-job1-sa@my-map-315516.iam.gserviceaccount.com"}
+
+        - call_job1: # 2. Gọi Job 1 (Cloud Run Job) - Theo GCP documentation
+            call: googleapis.run.v1.namespaces.jobs.run
+            args:
+                name: ${"namespaces/" + project_id + "/jobs/" + job1_name}
+                location: ${region}
+                body:
+                    overrides:
+                        containerOverrides:
+                            env:
+                                - name: EXECUTION_TIME
+                                  value: ${execution_time}
+                                - name: GCS_BUCKET_NAME
+                                  value: ${gcs_bucket}
+            result: job1_execution_result
+
+        - job1_success: # 3. Job 1 đã được trigger -> Tính toán URI và Gọi Job 2
+            assign:
+                - gcs_file_uri: ${"gs://" + gcs_bucket + "/raw_data/" + execution_time + "/" + execution_time + "_raw_batch.json"}
+            next: call_job2_func
+
+        - call_job2_func: # 5. Gọi Job 2 (Cloud Function HTTP Trigger)
+            call: http.post
+            args:
+                url: ${cf_job2_url}
+                auth:
+                    type: OIDC
+                body:
+                    gcs_file_uri: ${gcs_file_uri}
+            result: job2_result
+            next: end_success
+
+        - job1_failed: # Xử lý Job 1 thất bại -> Dừng Pipeline
+            raise:
+                message: "Job 1 failed to run or timed out"
+
+        - end_success:
+            return: "Pipeline completed successfully."
